@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XKeen Config Generator</title>
+    <style>
+        body.dark-theme {
+            background-color: #1e1e1e;
+            color: #c9d1d9;
+        }
+
+        body.light-theme {
+            background-color: #ffffff;
+            color: #000000;
+        }
+
+        button, input {
+            background-color: #444;
+            color: #fff;
+            border: none;
+            padding: 8px;
+            margin: 4px;
+            border-radius: 4px;
+        }
+
+        body.light-theme button, body.light-theme input {
+            background-color: #ddd;
+            color: #000;
+        }
+
+        #theme-toggle {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+
+        pre {
+            background-color: #333;
+            color: #fff;
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        body.light-theme pre {
+            background-color: #f4f4f4;
+            color: #000;
+        }
+    </style>
+</head>
+<body class="dark-theme">
+    <h1>XKeen Config Generator</h1>
+    <label for="url">Введите ссылку:</label>
+    <input type="text" id="url" placeholder="vless://...">
+    <button onclick="generateConfig()">Сгенерировать конфиг</button>
+    <button onclick="saveConfig()">Сохранить в файл</button>
+    <button id="theme-toggle" onclick="toggleTheme()">Сменить тему</button>
+    <div id="warnings" style="color: red;"></div>
+    <pre id="output"></pre>
+
+    <script>
+        let config = {};
+
+        function generateConfig() {
+            const url = document.getElementById('url').value;
+            const regex = /([a-z]+):\/\/([^@]+)@([^:]+):(\d+)/;
+            const match = url.match(regex);
+
+            if (url.startsWith("vmess://")) {
+                const base64Payload = url.substring(8);
+                try {
+                    const decodedPayload = atob(base64Payload);
+                    const vmessConfig = JSON.parse(decodedPayload);
+                    console.log("Decoded VMess Config:", vmessConfig); // Для отладки
+
+                    config = {
+                        "outbounds": [
+                            {
+                                "tag": "vless-reality",    // Фиксированное название соединения
+                                "protocol": "vmess",
+                                "settings": {
+                                    "vnext": [
+                                        {
+                                            "address": vmessConfig.add,    // IP адрес или доменное имя сервера
+                                            "port": vmessConfig.port,      // Порт сервера
+                                            "users": [
+                                                {
+                                                    "id": vmessConfig.id,    // UUID пользователя
+                                                    "alterId": vmessConfig.aid || 0,  // Альтернативный ID (по умолчанию 0)
+                                                    "security": vmessConfig.scy || "auto", // Метод шифрования
+                                                    "level": 0
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                "streamSettings": {
+                                    "network": vmessConfig.net,    // Тип сети (tcp, kcp, ws, h2 и т.д.)
+                                    "security": vmessConfig.tls === "tls" ? "tls" : "none",  // TLS
+                                    "tlsSettings": vmessConfig.tls === "tls" ? {
+                                        "allowInsecure": true,
+                                        "serverName": vmessConfig.sni || "",
+                                        "fingerprint": vmessConfig.fp || ""  // Добавлен fingerprint
+                                    } : undefined,
+                                    "wsSettings": vmessConfig.net === "ws" ? {
+                                        "path": vmessConfig.path || "",
+                                        "headers": {
+                                            "Host": vmessConfig.host || ""
+                                        }
+                                    } : undefined,
+                                    "httpSettings": vmessConfig.net === "h2" ? {
+                                        "host": vmessConfig.host ? vmessConfig.host.split(',') : [],
+                                        "path": vmessConfig.path || ""
+                                    } : undefined,
+                                    "kcpSettings": vmessConfig.net === "kcp" ? {
+                                        "mtu": 1350,
+                                        "tti": 50,
+                                        "uplinkCapacity": 12,
+                                        "downlinkCapacity": 100,
+                                        "congestion": false,
+                                        "readBufferSize": 2,
+                                        "writeBufferSize": 2,
+                                        "header": {
+                                            "type": vmessConfig.type || "none"
+                                        }
+                                    } : undefined
+                                }
+                            },
+                            {
+                                "tag": "direct",
+                                "protocol": "freedom"
+                            },
+                            {
+                                "tag": "block",
+                                "protocol": "blackhole",
+                                "settings": {
+                                    "response": {
+                                        "type": "http"
+                                    }
+                                }
+                            }
+                        ]
+                    };
+                    document.getElementById('output').textContent = JSON.stringify(config, null, 4);
+                } catch (e) {
+                    console.error("Error parsing VMess link:", e);
+                    document.getElementById('output').textContent = "Ошибка разбора vmess ссылки.";
+                }
+            } else if (match) {
+                const protocol = match[1];
+                const userInfo = match[2];
+                const address = match[3];
+                const port = parseInt(match[4], 10);
+
+                const parsedUrl = new URL(url);
+                const params = new URLSearchParams(parsedUrl.search);
+
+                // Предупреждения
+                let warnings = [];
+                if (port !== 443 && protocol !== "ss") {
+                    warnings.push("⚠️ Рекомендуется использовать порт 443.");
+                }
+
+                // Обновляем отображение предупреждений
+                document.getElementById('warnings').innerHTML = warnings.join("<br>");
+
+                // Генерация конфигурации
+                if (protocol === "vless" || protocol === "trojan") {
+                    config = {
+                        "outbounds": [
+                            {
+                                "tag": "vless-reality",    // Фиксированное название соединения
+                                "protocol": protocol,       // Протокол
+                                "settings": {
+                                    "vnext": protocol === "vless" ? [
+                                        {
+                                            "address": address,    // IP адрес или доменное имя сервера
+                                            "port": port,    // Порт Reality
+                                            "users": [
+                                                {
+                                                    "id": userInfo,    // ID, присвоенный пользователю на сервере
+                                                    "flow": params.get("flow") || "",    // Flow
+                                                    "encryption": "none",                                
+                                                    "level": 0                                  
+                                                }
+                                            ]
+                                        }
+                                    ] : undefined,
+                                    "servers": protocol === "trojan" ? [
+                                        {
+                                            "address": address,    // IP адрес или доменное имя сервера
+                                            "port": port,    // Порт Reality
+                                            "password": userInfo,    // Пароль для Trojan
+                                            "flow": params.get("flow") || "",    // Flow
+                                            "method": "chacha20-poly1305", // Метод шифрования (например, для Trojan)
+                                            "ota": false,                 // One Time Auth для метода (если применимо)
+                                            "level": 0
+                                        }
+                                    ] : undefined
+                                },
+                                "streamSettings": {
+                                    "network": params.get("type") || "tcp",    // Network - установка по умолчанию на "tcp"
+                                    "security": params.get("security") || (protocol === "trojan" ? "tls" : ""),  // Security
+                                    "tlsSettings": (params.get("security") === "tls" || protocol === "trojan") ? {
+                                        "alpn": params.get("alpn") ? params.get("alpn").split(',') : [],
+                                        "fingerprint": params.get("fp") || "",
+                                        "serverName": params.get("sni") || "",
+                                        "allowInsecure": true,
+                                        "show": false
+                                    } : undefined,
+                                    "realitySettings": params.get("security") === "reality" ? {
+                                        "publicKey": params.get("pbk") || "",    // Public Key
+                                        "fingerprint": params.get("fp") || "",   // Fingerprint
+                                        "serverName": params.get("sni") || "",   // SNI
+                                        "shortId": params.get("sid") || "",    // Short ID
+                                        "spiderX": params.get("spx") || "/"    // SpiderX
+                                    } : undefined,
+                                    "wsSettings": params.get("type") === "ws" ? {
+                                        "path": params.get("path") || "",
+                                        "headers": {
+                                            "Host": params.get("host") || ""
+                                        }
+                                    } : undefined
+                                }
+                            },
+                            {
+                                "tag": "direct",
+                                "protocol": "freedom"
+                            },
+                            {
+                                "tag": "block",
+                                "protocol": "blackhole",
+                                "settings": {
+                                    "response": {
+                                        "type": "http"
+                                    }
+                                }
+                            }
+                        ]
+                    };
+                    document.getElementById('output').textContent = JSON.stringify(config, null, 4);
+                } else if (protocol === "ss") {
+                    const parsedParams = new URLSearchParams(url.split('?')[1] || "");
+                    const method = parsedParams.get("method") || "aes-256-gcm";
+                    const password = parsedParams.get("password") || "";
+
+                    config = {
+                        "outbounds": [
+                            {
+                                "tag": "ss",
+                                "protocol": "shadowsocks",
+                                "settings": {
+                                    "servers": [
+                                        {
+                                            "address": address,
+                                            "port": port,
+                                            "method": method,
+                                            "password": password
+                                        }
+                                    ]
+                                }
+                            },
+                            {
+                                "tag": "direct",
+                                "protocol": "freedom"
+                            },
+                            {
+                                "tag": "block",
+                                "protocol": "blackhole",
+                                "settings": {
+                                    "response": {
+                                        "type": "http"
+                                    }
+                                }
+                            }
+                        ]
+                    };
+                    document.getElementById('output').textContent = JSON.stringify(config, null, 4);
+                } else {
+                    document.getElementById('warnings').innerText = "Unsupported protocol.";
+                    document.getElementById('output').textContent = "Протокол не поддерживается.";
+                }
+            } else {
+                document.getElementById('warnings').innerText = "Invalid URL format.";
+                document.getElementById('output').textContent = "Неверный формат ссылки.";
+            }
+        }
+
+        function saveConfig() {
+            const blob = new Blob([JSON.stringify(config, null, 4)], { type: 'application/json' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'config.json';
+            link.click();
+        }
+
+        function toggleTheme() {
+            const currentTheme = document.body.classList.contains('dark-theme') ? 'dark-theme' : 'light-theme';
+            const newTheme = currentTheme === 'dark-theme' ? 'light-theme' : 'dark-theme';
+            document.body.classList.replace(currentTheme, newTheme);
+            localStorage.setItem('theme', newTheme);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedTheme = localStorage.getItem('theme') || 'dark-theme';
+            document.body.classList.add(savedTheme);
+        });
+    </script>
+</body>
+</html>
