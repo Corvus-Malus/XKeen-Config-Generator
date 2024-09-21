@@ -290,7 +290,7 @@
             const blob = new Blob([JSON.stringify(config, null, 4)], { type: 'application/json' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = 'config.json';
+            link.download = '04_outbounds.json';
             link.click();
         }
 
